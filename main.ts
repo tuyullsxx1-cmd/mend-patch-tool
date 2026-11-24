@@ -278,12 +278,12 @@ function parseUnified(lines: string[], strict: boolean): Edit[] {
           throw new Exit2(`error: parse ${i + 2}`);
         }
         if (h.startsWith('rename from ')) {
-          sec.oldPath = h.slice('rename from '.length).trim();
+          if (!hasPair) sec.oldPath = h.slice('rename from '.length).trim();
           i++;
           continue;
         }
         if (h.startsWith('rename to ')) {
-          sec.newPath = h.slice('rename to '.length).trim();
+          if (!hasPair) sec.newPath = h.slice('rename to '.length).trim();
           i++;
           continue;
         }
@@ -331,7 +331,9 @@ function unifiedEdit(sec: Section, strict: boolean): Edit {
     const isCreate = oldP === null || sec.newFile;
     const isDelete = newP === null || sec.deletedFile;
     if (isCreate) {
-      const target = newP!;
+      // Both paths /dev/null names no file: the section has no effect.
+      if (newP === null) return;
+      const target = newP;
       if (tree.get(target) !== null) throw new Fail('exists', target);
       let plus: string[] = [];
       let noFinal = false;
@@ -533,6 +535,7 @@ function parseV4A(lines: string[], strict: boolean): Edit[] {
     }
     if (l.startsWith('*** Update File: ')) {
       const path = l.slice('*** Update File: '.length).trim();
+      const updLine = i + 1;
       i++;
       let moveTo: string | null = null;
       if (i < last && lines[i]!.startsWith('*** Move to: ')) {
@@ -564,6 +567,27 @@ function parseV4A(lines: string[], strict: boolean): Edit[] {
           continue;
         }
         if (s === '' || s[0] === ' ' || s[0] === '-' || s[0] === '+') {
+          if (cur === null && chunks.length > 0) {
+            // A body line after the first chunk cannot start another chunk:
+            // chunks start at an @@ line, or (first chunk only) at a body
+            // line. A blank line is excused only when nothing but blanks
+            // follows before the section ends (trailing section blanks).
+            if (s === '') {
+              let j = i + 1;
+              while (j < last && lines[j] === '') j++;
+              const sectionEnds =
+                j >= last ||
+                lines[j]!.startsWith('*** Add File: ') ||
+                lines[j]!.startsWith('*** Delete File: ') ||
+                lines[j]!.startsWith('*** Update File: ') ||
+                lines[j]!.trim() === '*** End Patch';
+              if (sectionEnds) {
+                i = j;
+                continue;
+              }
+            }
+            throw new Exit2(`error: parse ${i + 1}`);
+          }
           if (cur === null) cur = { anchor: null, o: [], n: [], eof: false };
           if (s === '') {
             cur.o.push({ text: '', ctx: true, oIdx: cur.o.length });
@@ -606,7 +630,7 @@ function parseV4A(lines: string[], strict: boolean): Edit[] {
         if (c.anchor === null && c.o.length === 0 && c.n.length === 0) chunks.pop();
         else break;
       }
-      if (chunks.length === 0 && moveTo === null) throw new Exit2(`error: parse ${i + 1}`);
+      if (chunks.length === 0 && moveTo === null) throw new Exit2(`error: parse ${updLine}`);
       if (chunks.length === 0 && moveTo !== null) {
         edits.push(v4aMoveOnly(path, moveTo));
       } else {
